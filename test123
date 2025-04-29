@@ -1,1 +1,111 @@
 
+#ifdef _WIN32
+#include <winsock2.h>
+#include <windows.h>
+#pragma comment(lib, "ws2_32.lib")
+#else
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <signal.h>
+#endif
+
+#include <stdio.h>
+#include "msgstruct.h"
+#include "dummy_common.h"
+
+#ifdef _WIN32
+DWORD WINAPI client_handler(LPVOID param);
+#else
+void* client_handler(void* param);
+#endif
+
+int main(int argc, char* argv[])
+{
+#ifdef _WIN32
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+#endif
+
+    int listenSock;
+    struct sockaddr_in serverAddr;
+
+    listenSock = socket(AF_INET, SOCK_STREAM, 0);
+    if (listenSock < 0) {
+        printf("socket error\n");
+        return -1;
+    }
+
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serverAddr.sin_port = htons(SERVER_PORT);
+
+    if (bind(listenSock, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
+        printf("bind error\n");
+        return -1;
+    }
+
+    if (listen(listenSock, 5) < 0) {
+        printf("listen error\n");
+        return -1;
+    }
+
+    printf("Server listening...\n");
+
+    while (1) {
+        struct sockaddr_in clientAddr;
+#ifdef _WIN32
+        int clientLen = sizeof(clientAddr);
+        SOCKET clientSock = accept(listenSock, (struct sockaddr*)&clientAddr, &clientLen);
+#else
+        socklen_t clientLen = sizeof(clientAddr);
+        int clientSock = accept(listenSock, (struct sockaddr*)&clientAddr, &clientLen);
+#endif
+        if (clientSock < 0) {
+            printf("accept error\n");
+            continue;
+        }
+
+#ifdef _WIN32
+        CreateThread(NULL, 0, client_handler, (LPVOID)clientSock, 0, NULL);
+#else
+        pthread_t tid;
+        pthread_create(&tid, NULL, client_handler, (void*)(intptr_t)clientSock);
+#endif
+    }
+
+#ifdef _WIN32
+    WSACleanup();
+#endif
+
+    return 0;
+}
+
+#ifdef _WIN32
+DWORD WINAPI client_handler(LPVOID param)
+{
+    SOCKET sock = (SOCKET)param;
+#else
+void* client_handler(void* param)
+{
+    int sock = (intptr_t)param;
+#endif
+    char buffer[1024];
+    int n;
+
+    while ((n = recv(sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
+        buffer[n] = '\0';
+        printf("Received: %s\n", buffer);
+        send(sock, buffer, n, 0);
+    }
+
+#ifdef _WIN32
+    closesocket(sock);
+#else
+    close(sock);
+#endif
+    return 0;
+}
